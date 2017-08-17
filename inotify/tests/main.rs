@@ -69,6 +69,20 @@ fn it_should_handle_file_names_correctly() {
     assert!(num_events > 0);
 }
 
+#[test]
+fn it_should_not_accept_watchdescriptors_from_other_instances() {
+    let mut testdir = TestDir::new();
+    let (path, file) = testdir.new_file();
+
+    let mut inotify = Inotify::init().unwrap();
+    let wd1 = inotify.add_watch(&path, watch_mask::ACCESS).unwrap();
+
+    let mut second_inotify = Inotify::init().unwrap();
+    let wd2 = second_inotify.add_watch(&path, watch_mask::ACCESS).unwrap();
+
+    assert!(wd1 != wd2);
+}
+
 
 struct TestDir {
     dir: TempDir,
