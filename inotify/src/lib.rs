@@ -265,7 +265,7 @@ impl Inotify {
     /// [`Inotify::add_watch`]: struct.Inotify.html#method.add_watch
     /// [`Event`]: struct.Event.html
     pub fn rm_watch(&mut self, wd: WatchDescriptor) -> io::Result<()> {
-        if self.0 == wd.fd {
+        if self.0 != wd.fd {
             return Err(io::Error::new(ErrorKind::InvalidInput, "Invalid WatchDescriptor"))
         }
         let result = unsafe { ffi::inotify_rm_watch(self.0, wd.id) }; 
