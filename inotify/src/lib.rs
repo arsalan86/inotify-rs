@@ -1,6 +1,7 @@
 #![crate_name = "inotify"]
 #![crate_type = "lib"]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![deny(warnings)]
 
 //! Binding and wrapper for inotify.
 //!
@@ -31,7 +32,12 @@ use std::mem;
 use std::io;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{
+    AsRawFd,
+    FromRawFd,
+    IntoRawFd,
+    RawFd,
+};
 use std::path::Path;
 use std::slice;
 use std::ffi::{
@@ -157,20 +163,43 @@ impl Inotify {
         }
     }
 
-    /// Watches the file at the given path
+    /// Adds or updates a watch for the given path
     ///
-    /// Adds a watch for the file at the given path by calling
-    /// [`inotify_add_watch`]. Returns a watch descriptor that can be used to
-    /// refer to this watch later.
+    /// Adds a new watch or updates an existing one for the file referred to by
+    /// `path`. Returns a watch descriptor that can be used to refer to this
+    /// watch later.
     ///
     /// The `mask` argument defines what kind of changes the file should be
     /// watched for, and how to do that. See the documentation of [`WatchMask`]
     /// for details.
     ///
+    /// If this method is used to add a new watch, a new `WatchDescriptor` is
+    /// returned. If it is used to update an existing watch, the same
+    /// `WatchDescriptor` for that existing watch is returned.
+    ///
+    /// Under the hood, this method just calls [`inotify_add_watch`] and does
+    /// some trivial translation between the types on the Rust side and the C
+    /// side.
+    ///
+    /// # Attention: Updating watches and hardlinks
+    ///
+    /// As mentioned above, this method can be used to update an existing watch.
+    /// This is usually done by calling this method with the same `path`
+    /// argument that it has been called with before. But less obviously, it can
+    /// also happen if the method is called with a different path that happens
+    /// to link to the same inode.
+    ///
+    /// You can detect this by keeping track of `WatchDescriptor`s and the paths
+    /// they have been returned for. If the same `WatchDescriptor` is returned
+    /// for a different path (and you haven't freed the `WatchDescriptor` by
+    /// removing the watch), you know you have two paths pointing to the same
+    /// inode, and therefore being watched by the same watch.
+    ///
     /// # Errors
     ///
-    /// Directly returns the error from the call to [`inotify_add_watch`],
-    /// without adding any error conditions of its own.
+    /// Directly returns the error from the call to [`inotify_add_watch`]
+    /// (translated into an `io::Error`), without adding any error conditions of
+    /// its own.
     ///
     /// # Examples
     ///
@@ -428,30 +457,11 @@ impl Inotify {
     ///
     /// [`Inotify`]: struct.Inotify.html
     /// [`close`]: ../libc/fn.close.html
-    pub fn close(mut self) -> io::Result<()> {
-        let result = unsafe { ffi::close(self.0) };
-        self.0 = -1;
-        match result {
+    pub fn close(self) -> io::Result<()> {
+        match unsafe { ffi::close(self.0) } {
             0 => Ok(()),
             _ => Err(io::Error::last_os_error()),
         }
-    }
-
-
-    /// Access inotify file descriptor
-    ///
-    /// This method provides access to the inotify file descriptor. While this
-    /// is not required for any of the tasks that are covered by this API, it
-    /// might be necessary for providing additional features on top of it.
-    ///
-    /// # Safety
-    ///
-    /// This function is marked `unsafe`, as direct access to the file
-    /// descriptor allows for all kinds of actions that could cause `Inotify` to
-    /// no longer work correctly. Please be aware of what you're doing, and how
-    /// this might affect the inotify-rs code.
-    pub unsafe fn fd(&mut self) -> &mut RawFd {
-        &mut self.0
     }
 }
 
@@ -460,6 +470,26 @@ impl Drop for Inotify {
         if self.0 != -1 {
             unsafe { ffi::close(self.0); }
         }
+    }
+}
+
+impl AsRawFd for Inotify {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+impl FromRawFd for Inotify {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Inotify(fd)
+    }
+}
+
+impl IntoRawFd for Inotify {
+    fn into_raw_fd(self) -> RawFd {
+        let fd = self.0;
+        mem::forget(self);
+        fd
     }
 }
 
